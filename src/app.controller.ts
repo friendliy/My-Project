@@ -1,86 +1,101 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Put,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Delete, Param, Put, UseInterceptors, UploadedFile, BadRequestException, Res, Query } from '@nestjs/common';
 import { AppService } from './app.service';
-import { ApiBearerAuth, ApiBody } from '@nestjs/swagger';
-import { CreateMahasiswaDTO } from './dto/create-mahasiswa.dto';
-import { UpdateMahasiswaDTO } from './dto/update-mahasiswa.dto';
-import { get } from 'http';
-import { RegisterUserDto } from './dto/register-user.dto';
-import { UserDecorator } from './user.decorator';
+import { ApiBody, ApiConsumes, ApiBearerAuth } from '@nestjs/swagger';
+import { CreateMahasiswaDTO} from './dto/create-mahasiswa.dto';
+import { UpdateMahasiswaDTO} from './dto/update-mahasiswa.dto';
+import { RegisterUserDTO } from './dto/register-user.dto';
+import { LoginUserDTO } from './dto/login-user.dto';
 import { AuthGuard } from './auth.guard';
-import { User } from '@prisma/client';
-import { LoginUserDto } from './login-user.dto';
+import { UserDecorator } from './user.decorator';
+import { User } from './entity/user.entity';
+import { UseGuards } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Express, Response } from 'express';
 
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
 
-  @Post('Mahasiswa')
-  @ApiBody({ type: CreateMahasiswaDTO })
-  createMahasiswa(@Body() data: CreateMahasiswaDTO) {
-    return this.appService.addMahasiswa(data);
-  }
-
-  @Delete('Mahasiswa/:nim')
-  deleteMahasiswa(@Param('nim') nim: string) {
-    return this.appService.deleteMahasiswa(nim);
-  }
-
-  // @Put('Mahasiswa/:nim')
-  // @ApiBody({ type: UpdateMahasiswaDTO })
-  // editMahasiswa(@Body() { nama }: UpdateMahasiswaDTO) {
-  //   return this.appService.updateMahasiswa(nama);
-  // }
-  @Put('Mahasiswa/:nim')
-  @ApiBody({ type: UpdateMahasiswaDTO })
-  editMahasiswa(
-    @Param('nim') nim: string,
-    @Body() { nama }: UpdateMahasiswaDTO,
-  ) {
-   
-  }
-
-  @Get('Mahasiswa')
-  getMahasiswa() {
-    return this.appService.getMahasiswa();
-  }
-  @Post("register")
+  @Post('mahasiswa/:nim/upload')
+  @ApiConsumes("multipart/form-data")
   @ApiBody({
-    type : RegisterUserDto
-
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
   })
-  register(@Body() data : RegisterUserDto) {
-    return this.appService.register(data)
+  @UseInterceptors(FileInterceptor('file'))
+  async uploadMahasiswaFoto(
+    @UploadedFile() file: Express.Multer.File,
+    @Param('nim') nim: string,
+  ) {
+    if (!file) throw new BadRequestException('File tidak boleh kosong');
+    return this.appService.uploadMahasiswaFoto(file, nim);
+  }
+
+  @Get('mahasiswa/:nim/foto')
+  async getMahasiswaFoto(@Param('nim') nim: string, @Res() res: Response) {
+    const filename = await this.appService.getMahasiwaFoto(nim);
+    return res.sendFile(filename, { root: 'uploads' });
+  }
+
+  @Get('mahasiswa/search')
+  async searchMahasiswa(@Query('nim') nim?: string) {
+    return this.appService.searchMahasiswa(nim);
+  }
+
+  @Post('register')
+  @ApiBody({
+    type: RegisterUserDTO
+  })
+  register(@Body() data: RegisterUserDTO) {
+    return this.appService.register(data);
   }
 
   @Get("/auth")
   @UseGuards(AuthGuard)
   @ApiBearerAuth()
-  auth(@UserDecorator() user : User) {
-  return user
+  auth(@UserDecorator() user: User) {
+    return user;
   }
 
-
-  @Post("login")
+  @Post('login')
   @ApiBody({
-    
+    type: LoginUserDTO
   })
-  login (@Body() data : LoginUserDto) {
-    return this.appService.login(data)
+  login(@Body() data: LoginUserDTO) {
+    return this.appService.login(data);
   }
 
-  @Get('Mahasiswa/:nim')
+  @Post('mahasiswa')
+  @ApiBody({ type: CreateMahasiswaDTO })
+  createMahasiswa(@Body() data: CreateMahasiswaDTO) {
+    return this.appService.addMahasiswa(data);
+  }
+
+  @Delete('mahasiswa/:nim')
+  deleteMahasiswa(@Param('nim') nim: string) {
+    return this.appService.deleteMahasiswa(nim);
+  }
+
+  @Put('mahasiswa/:nim')
+  @ApiBody({ type: UpdateMahasiswaDTO })
+  editMahasiswa(@Param('nim') nim: string, @Body() data: UpdateMahasiswaDTO) {
+    return this.appService.updateMahasiswa(nim, data);
+  }
+
+  @Get('mahasiswa')
+  getMahasiswa() {
+    return this.appService.getMahasiswa();
+  }
+
+  @Get('mahasiswa/:nim')
   getMahasiswaByNim(@Param('nim') nim: string) {
     return this.appService.getMahasiswaByNIM(nim);
   }
-
- 
 }

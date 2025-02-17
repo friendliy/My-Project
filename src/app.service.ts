@@ -1,168 +1,206 @@
-import {  BadRequestException, HttpException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
-import {CreateMahasiswaDTO } from './dto/create-mahasiswa.dto';
+import { BadRequestException, HttpException, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { CreateMahasiswaDTO } from './dto/create-mahasiswa.dto';
 import prisma from './prisma';
-import { RegisterUserDto } from './dto/register-user.dto';
-import { hash } from 'crypto';
-import { compareSync, hashSync } from 'bcrypt';
+import { RegisterUserDTO } from './dto/register-user.dto';
+import { hashSync, compareSync } from 'bcrypt';
+import { LoginUserDTO } from './dto/login-user.dto';
 import { JwtService } from '@nestjs/jwt';
-import { plainToInstance } from 'class-transformer';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { extname, join } from 'path';
+import { UpdateMahasiswaDTO } from './dto/update-mahasiswa.dto';
 import { User } from './entity/user.entity';
 
 @Injectable()
 export class AppService {
-  constructor(private readonly JwtServis:JwtService ){}
+  constructor(private readonly jwtService: JwtService) {}
 
-  async register(data : RegisterUserDto){
-    try {
-      const user = await prisma.user.findFirst({
-        where : {
-          username : data.username
-        }
-      })
-      if (user !=null) throw new BadRequestException("Username Sudah Ada")
+  async uploadMahasiswaFoto(file: Express.Multer.File, nim: string) {
+    const mahasiswa = await prisma.mahasiswa.findFirst({ where: { nim } });
+    if (!mahasiswa) throw new NotFoundException('Mahasiswa Tidak Ditemukan');
 
-        const hash = hashSync(data.password, 10)
-
-        const newUser = await prisma.user.create({
-          data : {
-            username : data.username,
-            password : hash,
-            role : "User"
-          }
-        })
-
-        return newUser
-      
-    } catch (err) {
-      if(err instanceof HttpException) throw err
-      console.log(err)
-      throw new InternalServerErrorException("Ada Masalah Pada Server")
-
-    }
-  } 
-  async auth(user_id : number) {
-     try {
-     const user = await prisma.user.findFirst({
-     where : {
-      id : user_id
-     }
-     })
-  if(user == null) throw new NotFoundException("User Tidak Ditemukan")
-    return user
-     }catch(err) {
-     if(err instanceof HttpException) throw err
-     throw new InternalServerErrorException("Terdapat Masalah Dari Server Harap Coba Lagi dalam beberapa menit")
-     }
-     }
-  
-  async login(data : RegisterUserDto){
-    try {
-      const user = await prisma.user.findFirst({
-        where : {
-          username : data.username
-        }
-
-      })
-
-      if (user ==null) 
-        throw new BadRequestException("Username gak ada")
-
-      if(!compareSync(data.password,user.password)){
-        throw new BadRequestException("password salah")
-
+    if (mahasiswa.foto_profile) {
+      const filePath = `../uploads/${mahasiswa.foto_profile}`;
+      if (existsSync(filePath)) {
+        rmSync(filePath);
       }
+    }
+
+    const uploadPath = join(__dirname, '../uploads/');
+    if (!existsSync(uploadPath)) {
+      mkdirSync(uploadPath);
+    }
+
+    const fileExt = extname(file.originalname);
+    const baseFilename = mahasiswa.nim;
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    const filename = `${baseFilename}-${uniqueSuffix}${fileExt}`;
+    const filePath = `${uploadPath}${filename}`;
+
+    writeFileSync(filePath, file.buffer);
+    await prisma.mahasiswa.update({
+      where: { nim },
+      data: { foto_profile: filename },
+    });
+
+    return filename;
+  }
+
+  async getMahasiwaFoto(nim: string) {
+    const mahasiswa = await prisma.mahasiswa.findFirst({ where: { nim } });
+    if (!mahasiswa) throw new NotFoundException('Mahasiswa Tidak Ditemukan');
+    return mahasiswa.foto_profile;
+  }
+
+  async searchMahasiswa(nim?: string) {
+    try {
+      const mahasiswa = await prisma.mahasiswa.findMany({
+        where: {
+          AND: [
+            nim ? { nim: { equals: nim } } : {},
+          ],
+        },
+      });
+      return mahasiswa;
+    } catch (error) {
+      throw new InternalServerErrorException('Ada masalah pada server');
+    }
+  }
+
+  async register(data: RegisterUserDTO) {
+    try {
+      const user = await prisma.user.findFirst({
+        where: {
+          username: data.username,
+        },
+      });
+      if (user != null) throw new BadRequestException('Username Sudah Ada');
+
+      const hash = hashSync(data.password, 10);
+      const newUser = await prisma.user.create({
+        data: {
+          username: data.username,
+          password: hash,
+          role: 'user',
+        },
+      });
+      return newUser;
+    } catch (err) {
+      throw new InternalServerErrorException('Ada Masalah Pada Server');
+    }
+  }
+
+  async auth(user_id: number) {
+    try {
+      const user = await prisma.user.findFirst({
+        where: {
+          id: user_id,
+        },
+      });
+      if (user == null) throw new NotFoundException('User Tidak Ditemukan');
+      return user;
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      throw new InternalServerErrorException('Terdapat Masalah Dari Server Harap Coba Lagi dalam beberapa menit');
+    }
+  }
+
+  async login(data: LoginUserDTO) {
+    try {
+      const user = await prisma.user.findFirst({
+        where: {
+          username: data.username,
+        },
+      });
+      if (user == null) throw new NotFoundException('Username Tidak Ditemukan');
+
+      const isPasswordValid = compareSync(data.password, user.password);
+      if (!isPasswordValid) throw new BadRequestException('Password Salah');
 
       const payload = {
-        id : user.id,
-        username : user.username,
-        role : user.role
-      }
-
-      const token = this.JwtServis.sign(payload)
-
+        id: user.id,
+        username: user.username,
+        role: user.role, // Pastikan role ada di payload
+      };
+      const token = await this.jwtService.signAsync(payload);
       return {
-        token,
-        user : payload
-      }
-
-    
-      
+        token: token,
+        user,
+      };
     } catch (err) {
-      console.log(err)
-      if(err instanceof HttpException) throw err
-      throw new InternalServerErrorException("Ada Masalah Pada Server")
-
+      throw new InternalServerErrorException('Ada Masalah Pada Server');
     }
-  } 
-  
+  }
 
   async getMahasiswa() {
     return await prisma.mahasiswa.findMany();
   }
 
-  async getMahasiswaByNIM(nim : string) {
+  async getMahasiswaByNIM(nim: string) {
     const mahasiswa = await prisma.mahasiswa.findFirst({
-      where : {
-        nim
-      }
-    })
+      where: {
+        nim,
+      },
+    });
 
-    if(mahasiswa == null) 
-      throw new NotFoundException("Tidak Menemukan NIM")
+    if (mahasiswa == null) throw new NotFoundException('Tidak Menemukan NIM');
 
-    return mahasiswa
-
+    return mahasiswa;
   }
 
-  async addMahasiswa(data : CreateMahasiswaDTO) {
-    await prisma.mahasiswa.create({ data
-    })
+  async addMahasiswa(data: CreateMahasiswaDTO) {
+    await prisma.mahasiswa.create({
+      data,
+    });
 
-    return await prisma.mahasiswa.findMany()
+    return await prisma.mahasiswa.findMany();
   }
 
-  async deleteMahasiswa(nim : string) {
+  async deleteMahasiswa(nim: string) {
     const mahasiswa = await prisma.mahasiswa.findFirst({
-      where : {
-        nim 
-      }
-    })
+      where: {
+        nim,
+      },
+    });
 
-    if(mahasiswa == null) {
-      throw new NotFoundException("Tidak Menemukan NIM")
+    if (mahasiswa == null) {
+      throw new NotFoundException('Tidak Menemukan NIM');
     }
 
     await prisma.mahasiswa.delete({
-      where : {
-        nim 
-      }
-    })
+      where: {
+        nim,
+      },
+    });
 
-    return await prisma.mahasiswa.findMany()
+    return await prisma.mahasiswa.findMany();
   }
 
-  async UpdteMahasiswa(nim : string, nama : string) { 
+  async updateMahasiswa(nim: string, data: UpdateMahasiswaDTO) {
     const mahasiswa = await prisma.mahasiswa.findFirst({
-      where : {
-        nim 
-      }
-    })
+      where: {
+        nim,
+      },
+    });
 
-    if(mahasiswa == null) {
-      throw new NotFoundException("Tidak Menemukan NIM")
+    if (mahasiswa == null) {
+      throw new NotFoundException('Tidak Menemukan NIM');
     }
 
+    const updateData: any = {
+      nama: data.nama,
+      kelas: data.kelas,
+      jurusan: data.jurusan,
+      jenis_kelamin: data.jenis_kelamin,
+    };
+
+   
     await prisma.mahasiswa.update({
-      where : {
-        nim 
+      where: {
+        nim,
       },
-      data : {
-        nama
-      }
-    })
+      data: updateData,
+    });
 
-    return await prisma.mahasiswa.findMany()
+    return await prisma.mahasiswa.findMany();
   }
-
-  
 }
